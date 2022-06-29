@@ -7,12 +7,13 @@ namespace JSONParserTests
         [SetUp]
         public void Setup()
         {
+            JSONParser.JSON.Init();
         }
 
         [Test]
         public void Test1()
         {
-            JSONParser.Content[]? json = JSONParser.JSON.Parse("{}");
+            JSONParser.Content json = JSONParser.JSON.Parse("{}");
             Assert.NotNull(json);
         }
     }

@@ -38,20 +38,20 @@ namespace JSONParser
         }
     }
 
-    struct IntLiteral : Content
+    struct DoubleLiteral : Content
     {
-        public int Value
+        public double Value
         {
             get; set;
         }
 
-        public static implicit operator int(IntLiteral literal)
+        public static implicit operator double(DoubleLiteral literal)
         {
             return literal.Value;
         }
-        public static implicit operator IntLiteral(int literal)
+        public static implicit operator DoubleLiteral(double literal)
         {
-            return new IntLiteral(literal);
+            return new DoubleLiteral(literal);
         }
 
         public string ToJSON()
@@ -59,7 +59,7 @@ namespace JSONParser
             return Value.ToString();
         }
 
-        public IntLiteral(int value)
+        public DoubleLiteral(double value)
         {
             Value = value;
         }
@@ -145,9 +145,14 @@ namespace JSONParser
             return stringBuilder.ToString();
         }
 
-        public JSONArray()
+        public JSONArray(Content[]? values = null)
         {
             Values = new List<Content>();
+
+            if (values != null)
+            {
+                Values.AddRange(values);
+            }
         }
     }
 
@@ -269,7 +274,7 @@ namespace JSONParser
                 var currentChar = input[index];
                 var isQuot = currentChar == '"';
 
-                if (IsControlSymbol(input, index) && (!openedString || isQuot))
+                if ((IsControlSymbol(input, index) && !openedString) || isQuot)
                 {
                     nextControlToken = (index, currentChar, isQuot ? (openedString ? TokenType.quotEnd : TokenType.quotStart) : GetControlSymbolType(currentChar));
 
@@ -347,7 +352,7 @@ namespace JSONParser
         }
         private static bool TryGetLiteralType(string token, out TokenType type)
         {
-            if (int.TryParse(token, out _))
+            if (double.TryParse(token, out _))
             {
                 type = TokenType.number;
                 return true;
@@ -435,8 +440,20 @@ namespace JSONParser
             JSONArray array = new();
             int end = -1;
 
+            Action<int> validateInput = (int index) =>
+            {
+                var validTokens = GetValidTokenTypes(tokens[index].Type, Context.arrayElement, null);
+
+                if (!validTokens.Contains(index + 1 < tokens.Length ? tokens[index + 1].Type : TokenType.docEnd))
+                {
+                    throw new Exception($"Expected on of those tokens: {String.Join(", ", validTokens)}");
+                }
+            };
+
             if (tokens[startIndex].Type == TokenType.arrayStart)
             {
+                validateInput(startIndex);
+
                 for (int index = startIndex + 1; index < tokens.Length && end == -1; index++)
                 {
                     bool validate = true;
@@ -444,7 +461,7 @@ namespace JSONParser
                     switch (tokens[index].Type)
                     {
                         case TokenType.number:
-                            array.Add((IntLiteral)int.Parse(tokens[index].Value));
+                            array.Add((DoubleLiteral)double.Parse(tokens[index].Value));
                             break;
                         case TokenType.boolean:
                             array.Add((BoolLiteral)bool.Parse(tokens[index].Value));
@@ -469,18 +486,11 @@ namespace JSONParser
                         case TokenType.arrayEnd:
                             end = index;
                             break;
-                        default:
-                            break;
                     }
 
                     if (validate)
                     {
-                        var validTokens = GetValidTokenTypes(tokens[index].Type, Context.arrayElement, null);
-
-                        if (!validTokens.Contains(index + 1 < tokens.Length ? tokens[index + 1].Type : TokenType.docEnd))
-                        {
-                            throw new Exception($"Expected on of those tokens: {String.Join(", ", validTokens)}");
-                        }
+                        validateInput(index);
                     }
                 }
 
@@ -502,8 +512,20 @@ namespace JSONParser
             int end = -1;
             string? openedFieldName = null;
 
+            Action<int> validateInput = (int index) =>
+            {
+                var validTokens = GetValidTokenTypes(tokens[index].Type, Context.objectElement, openedFieldName != null);
+
+                if (!validTokens.Contains(index + 1 < tokens.Length ? tokens[index + 1].Type : TokenType.docEnd))
+                {
+                    throw new Exception($"Expected on of those tokens: {String.Join(", ", validTokens)}");
+                }
+            };
+
             if (tokens[startIndex].Type == TokenType.start)
             {
+                validateInput(startIndex);
+
                 for (int index = startIndex + 1; index < tokens.Length && end == -1; index++)
                 {
                     bool validate = true;
@@ -511,7 +533,7 @@ namespace JSONParser
                     switch (tokens[index].Type)
                     {
                         case TokenType.number:
-                            objectElement.DefineProperty(openedFieldName!, (IntLiteral)int.Parse(tokens[index].Value));
+                            objectElement.DefineProperty(openedFieldName!, (DoubleLiteral)double.Parse(tokens[index].Value));
                             openedFieldName = null;
                             break;
                         case TokenType.boolean:
@@ -548,18 +570,11 @@ namespace JSONParser
                         case TokenType.end:
                             end = index;
                             break;
-                        default:
-                            break;
                     }
 
                     if (validate)
                     {
-                        var validTokens = GetValidTokenTypes(tokens[index].Type, Context.objectElement, openedFieldName != null);
-
-                        if (!validTokens.Contains(index + 1 < tokens.Length ? tokens[index + 1].Type : TokenType.docEnd))
-                        {
-                            throw new Exception($"Expected on of those tokens: {String.Join(", ", validTokens)}");
-                        }
+                        validateInput(index);
                     }
                 }
 
@@ -575,29 +590,107 @@ namespace JSONParser
 
             return (objectElement, end);
         }
-        private static Content[] ParseTokens(Token[] tokens)
+        private static Content ParseTokens(Token[] tokens)
         {
-            List<Content> result = new();
             Token startToken = tokens[0];
 
             if (startToken.Type == TokenType.start)
             {
-                result.Add(ParseObject(tokens, 0).objectElement);
+                return ParseObject(tokens, 0).objectElement;
             }
             else if (startToken.Type == TokenType.arrayStart)
             {
-                result.Add(ParseArray(tokens, 0).array);
+                return ParseArray(tokens, 0).array;
             }
             else
             {
                 throw new Exception("Incorect open token");
             }
-
-            return result.ToArray();
         }
-        public static Content[] Parse(string json)
+        public static Content Parse(string json)
         {
             return ParseTokens(Tokenize(json.Replace("\n", "").Replace(" ", "")));
+        }
+
+        private static Content? AsLiteral(object obj)
+        {
+            switch (obj)
+            {
+                case double doubleLiteral:
+                    return (DoubleLiteral)doubleLiteral;
+                case bool boolLiteral:
+                    return (BoolLiteral)boolLiteral;
+                case string stringLiteral:
+                    return (StringLiteral)stringLiteral;
+                default:
+                    return null;
+            }
+        }
+        private static Object DOMObject(object obj)
+        {
+            var objectElement = new Object();
+            var type = obj.GetType();
+
+            foreach (var field in type.GetFields())
+            {
+                var value = field.GetValue(obj);
+
+                if (value != null)
+                {
+                    var asLiteral = AsLiteral(value);
+
+                    if (asLiteral != null)
+                    {
+                        objectElement.DefineProperty(field.Name, asLiteral);
+                    }
+                    else if (value is Array)
+                    {
+                        objectElement.DefineProperty(field.Name, DOMArray((Array)value));
+                    }
+                    else
+                    {
+                        objectElement.DefineProperty(field.Name, DOMObject(value));
+                    }
+                }
+            }
+
+            return objectElement;
+        }
+        private static JSONArray DOMArray(Array objects)
+        {
+            var array = new JSONArray();
+
+            foreach (var obj in objects)
+            {
+                if (obj != null)
+                {
+                    var asLiteral = AsLiteral(obj);
+
+                    if (asLiteral != null)
+                    {
+                        array.Add(asLiteral);
+                    }
+                    else if (obj is Array)
+                    {
+                        array.Add(DOMArray((Array)obj));
+                    }
+                    else
+                    {
+                        array.Add(DOMObject(obj));
+                    }
+                }
+            }
+
+            return array;
+        }
+        public static string Stringify(object obj)
+        {
+            return DOMObject(obj).ToJSON();
+        }
+
+        public static void Init()
+        {
+            Thread.CurrentThread.CurrentCulture = System.Globalization.CultureInfo.GetCultureInfo("en-US");
         }
     }
 }
