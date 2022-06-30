@@ -256,7 +256,7 @@ namespace JSONParser
         objectElement, arrayElement
     }
 
-    public class JSON
+    public static class JSON
     {
         private static readonly char[] ControlCharacters = new char[] { '{', '}', '[', ']', ',', '"', ':' };
         private static readonly char[] IgnoreCharacters = new char[] { ' ' };
@@ -276,43 +276,43 @@ namespace JSONParser
             for (int index = 0; index < input.Length; index++)
             {
                 var currentChar = input[index];
-                var isQuot = currentChar == '"';
+                var isQuot = IsQuot(currentChar);
 
-                //if current char is included to ignore symbols list it is skipped
-                if (!IsIgnoreSymbol(currentChar))
+                //if the symbol is control token (not an escape) and string isn't opened or the symbol is control token and it's quotation mark then current char is added to tokens list
+                if (IsControlSymbol(input, index) && (!openedString || isQuot))
                 {
-                    //if the symbol is control token (not an escape) and string isn't opened or the symbol is control token and it's quotation mark then current char is added to tokens list
-                    if (IsControlSymbol(input, index) && (!openedString || isQuot))
+                    var newControlToken = (index, currentChar, isQuot ? (openedString ? TokenType.quotEnd : TokenType.quotStart) : GetControlSymbolType(currentChar));
+
+                    nextControlToken = newControlToken;
+
+                    //if literal isn't empty or it's in quotes it is added to tokens list
+                    if (currentControlToken.index != -1 && (literal.Length > 0 || openedString))
                     {
-                        nextControlToken = (index, currentChar, isQuot ? (openedString ? TokenType.quotEnd : TokenType.quotStart) : GetControlSymbolType(currentChar));
+                        //function gets literal type
+                        tokens.Add(LiteralToToken(literal.ToString(), currentControlToken.index + 1, openedString));
 
-                        //if literal isn't empty or it's in quotes it is added to tokens list
-                        if (currentControlToken.index != -1 && (literal.Length > 0 || openedString))
-                        {
-                            //function gets literal type
-                            tokens.Add(LiteralToToken(literal.ToString(), currentControlToken.index + 1, openedString));
-
-                            literal.Clear();
-                        }
-                        
-                        currentControlToken.index = nextControlToken.index;
-                        currentControlToken.value = nextControlToken.value;
-                        currentControlToken.type = nextControlToken.type;
-
-                        //if control token is quotation mark then string opened flag switches to opposite state
-                        if (isQuot)
-                        {
-                            openedString = !openedString;
-                        }
-
-                        tokens.Add(new Token(currentControlToken.value.ToString(), currentControlToken.type, currentControlToken.index));
+                        literal.Clear();
                     }
-                    else
+
+                    currentControlToken = newControlToken;
+
+                    //if control token is quotation mark then string opened flag switches to opposite state
+                    if (isQuot)
+                    {
+                        openedString = !openedString;
+                    }
+
+                    tokens.Add(new Token(currentControlToken.value.ToString(), currentControlToken.type, currentControlToken.index));
+                }
+                else
+                {
+                    //if current char is included to ignore symbols list it is skipped
+                    if (!IsIgnoreSymbol(currentChar) || openedString)
                     {
                         literal.Append(currentChar);
                     }
                 }
-            }            
+            }
 
             //string hasn't closing quotation mark
             if (openedString)
@@ -326,7 +326,11 @@ namespace JSONParser
         {
             return Array.IndexOf(IgnoreCharacters, symbol) != -1;
         }
-        private static bool IsControlSymbol(string input, int index)
+        private static bool IsQuot(char symbol)
+        {
+            return symbol == '"';
+        }
+        private static bool IsEscapeSymbol(string input, int index)
         {
             char selectedChar = input[index];
 
@@ -339,11 +343,17 @@ namespace JSONParser
 
                 if (stringSample == escapeSymbol)
                 {
-                    return false;
+                    return true;
                 }
             }
 
-            return Array.FindIndex(ControlCharacters, (char value) => { return value == selectedChar; }) != -1;
+            return false;
+        }
+        private static bool IsControlSymbol(string input, int index)
+        {
+            char selectedChar = input[index];
+
+            return Array.FindIndex(ControlCharacters, (char value) => { return value == selectedChar; }) != -1 && !IsEscapeSymbol(input, index);
         }
         private static Token LiteralToToken(string literal, int literalStartIndex, bool openedString)
         {
@@ -451,12 +461,12 @@ namespace JSONParser
                             }
                             break;
                         default:
-                            throw new Exception("Unhandled case");
+                            throw new Exception("Unhandled case (internal error)");
                     }
                     break;
             }
 
-            throw new Exception("Incorrect input");
+            throw new Exception("Incorrect input (internal error)");
         }
 
         private static (JSONArray array, int end) ParseArray(Token[] tokens, int startIndex)
@@ -480,7 +490,7 @@ namespace JSONParser
 
                 for (int index = startIndex + 1; index < tokens.Length && end == -1; index++)
                 {
-                    bool validate = true;
+                    int offset = 0;
 
                     switch (tokens[index].Type)
                     {
@@ -498,29 +508,26 @@ namespace JSONParser
 
                             array.Add(parsedArray.array);
                             index = parsedArray.end;
-                            validate = false;
+                            offset = 1;
                             break;
                         case TokenType.start:
                             var parsedObject = JSON.ParseObject(tokens, index);
 
                             array.Add(parsedObject.objectElement);
                             index = parsedObject.end;
-                            validate = false;
+                            offset = 1;
                             break;
                         case TokenType.arrayEnd:
                             end = index;
                             break;
                     }
 
-                    if (validate)
-                    {
-                        validateInput(index);
-                    }
+                    validateInput(index + offset);
                 }
 
                 if (end == -1)
                 {
-                    throw new Exception("Unterminated array");
+                    throw new Exception("Unterminated array (internal error)");
                 }
             }
             else
@@ -552,7 +559,7 @@ namespace JSONParser
 
                 for (int index = startIndex + 1; index < tokens.Length && end == -1; index++)
                 {
-                    bool validate = true;
+                    int offset = 0;
 
                     switch (tokens[index].Type)
                     {
@@ -581,7 +588,7 @@ namespace JSONParser
                             objectElement.DefineProperty(openedFieldName!, parsedArray.array);
                             index = parsedArray.end;
                             openedFieldName = null;
-                            validate = false;
+                            offset = 1;
                             break;
                         case TokenType.start:
                             var parsedObject = JSON.ParseObject(tokens, index);
@@ -589,17 +596,14 @@ namespace JSONParser
                             objectElement.DefineProperty(openedFieldName!, parsedObject.objectElement);
                             index = parsedObject.end;
                             openedFieldName = null;
-                            validate = false;
+                            offset = 1;
                             break;
                         case TokenType.end:
                             end = index;
                             break;
                     }
 
-                    if (validate)
-                    {
-                        validateInput(index);
-                    }
+                    validateInput(index + offset);
                 }
 
                 if (end == -1)
@@ -609,7 +613,7 @@ namespace JSONParser
             }
             else
             {
-                throw new Exception("StartIndex doesn't represent object start");
+                throw new Exception("StartIndex doesn't represent object start (internal error)");
             }
 
             return (objectElement, end);
@@ -636,18 +640,39 @@ namespace JSONParser
             return ParseTokens(Tokenize(json.Replace("\n", "")));
         }
 
+        private static bool IsNumber(this object value)
+        {
+            return value is sbyte
+                    || value is byte
+                    || value is short
+                    || value is ushort
+                    || value is int
+                    || value is uint
+                    || value is long
+                    || value is ulong
+                    || value is float
+                    || value is double
+                    || value is decimal;
+        }
         private static Content? AsLiteral(object obj)
         {
-            switch (obj)
+            if (obj.IsNumber())
             {
-                case double doubleLiteral:
-                    return (DoubleLiteral)doubleLiteral;
-                case bool boolLiteral:
-                    return (BoolLiteral)boolLiteral;
-                case string stringLiteral:
-                    return (StringLiteral)stringLiteral;
-                default:
-                    return null;
+                return (DoubleLiteral)Convert.ToDouble(obj);
+            }
+            else
+            {
+                switch (obj)
+                {
+                    case bool boolLiteral:
+                        return (BoolLiteral)boolLiteral;
+                    case string stringLiteral:
+                        return (StringLiteral)stringLiteral;
+                    case char charLiteral:
+                        return (StringLiteral)charLiteral.ToString();
+                    default:
+                        return null;
+                }
             }
         }
         private static JSONObject DOMObject(object obj)
@@ -712,7 +737,7 @@ namespace JSONParser
             return DOMObject(obj).ToJSON();
         }
 
-        public static void Init()
+        static JSON()
         {
             Thread.CurrentThread.CurrentCulture = System.Globalization.CultureInfo.GetCultureInfo("en-US");
         }

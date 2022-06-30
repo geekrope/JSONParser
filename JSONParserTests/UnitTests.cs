@@ -8,7 +8,7 @@ namespace JSONParserTests
         [SetUp]
         public void Setup()
         {
-            JSON.Init();
+
         }
 
         [Test]
