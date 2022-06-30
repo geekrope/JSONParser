@@ -11,7 +11,7 @@ namespace JSONParser
         public string ToJSON();
     }
 
-    struct BoolLiteral : Content
+    public struct BoolLiteral : Content
     {
         public bool Value
         {
@@ -38,7 +38,7 @@ namespace JSONParser
         }
     }
 
-    struct DoubleLiteral : Content
+    public struct DoubleLiteral : Content
     {
         public double Value
         {
@@ -65,7 +65,7 @@ namespace JSONParser
         }
     }
 
-    struct StringLiteral : Content
+    public struct StringLiteral : Content
     {
         public string Value
         {
@@ -112,7 +112,7 @@ namespace JSONParser
         }
     }
 
-    class JSONArray : Content
+    public class JSONArray : Content
     {
         private List<Content> Values
         {
@@ -156,7 +156,7 @@ namespace JSONParser
         }
     }
 
-    class Object : Content
+    public class JSONObject : Content
     {
         private Dictionary<StringLiteral, Content> Fields
         {
@@ -228,7 +228,7 @@ namespace JSONParser
             return stringBuilder.ToString();
         }
 
-        public Object()
+        public JSONObject()
         {
             Fields = new();
         }
@@ -259,11 +259,15 @@ namespace JSONParser
     public class JSON
     {
         private static readonly char[] ControlCharacters = new char[] { '{', '}', '[', ']', ',', '"', ':' };
+        private static readonly char[] IgnoreCharacters = new char[] { ' ' };
         private static IReadOnlyDictionary<char, string> EscapeSymbols = new Dictionary<char, string>(new KeyValuePair<char, string>[] { new KeyValuePair<char, string>('"', "\\\"") });
 
         private static Token[] Tokenize(string input)
         {
             bool openedString = false;
+            StringBuilder literal = new();
+
+            //init control tokens
             (int index, char value, TokenType type) currentControlToken = (-1, '\0', TokenType.none);
             (int index, char value, TokenType type) nextControlToken = (-1, '\0', TokenType.none);
 
@@ -274,43 +278,43 @@ namespace JSONParser
                 var currentChar = input[index];
                 var isQuot = currentChar == '"';
 
-                if ((IsControlSymbol(input, index) && !openedString) || isQuot)
+                //if current char is included to ignore symbols list it is skipped
+                if (!IsIgnoreSymbol(currentChar))
                 {
-                    nextControlToken = (index, currentChar, isQuot ? (openedString ? TokenType.quotEnd : TokenType.quotStart) : GetControlSymbolType(currentChar));
-
-                    int length = index - currentControlToken.index - 1;
-                    int literalStart = currentControlToken.index + 1;
-
-                    if (currentControlToken.index != -1 && (length > 0 || openedString))
+                    //if the symbol is control token (not an escape) and string isn't opened or the symbol is control token and it's quotation mark then current char is added to tokens list
+                    if (IsControlSymbol(input, index) && (!openedString || isQuot))
                     {
-                        string literal = input.Substring(literalStart, length);
-                        TokenType literalTokenType;
+                        nextControlToken = (index, currentChar, isQuot ? (openedString ? TokenType.quotEnd : TokenType.quotStart) : GetControlSymbolType(currentChar));
 
-                        if (openedString)
+                        //if literal isn't empty or it's in quotes it is added to tokens list
+                        if (currentControlToken.index != -1 && (literal.Length > 0 || openedString))
                         {
-                            literalTokenType = TokenType.text;
+                            //function gets literal type
+                            tokens.Add(LiteralToToken(literal.ToString(), currentControlToken.index + 1, openedString));
+
+                            literal.Clear();
                         }
-                        else
+                        
+                        currentControlToken.index = nextControlToken.index;
+                        currentControlToken.value = nextControlToken.value;
+                        currentControlToken.type = nextControlToken.type;
+
+                        //if control token is quotation mark then string opened flag switches to opposite state
+                        if (isQuot)
                         {
-                            TryGetLiteralType(literal, out literalTokenType);
+                            openedString = !openedString;
                         }
 
-                        tokens.Add(new Token(literal, literalTokenType, literalStart));
+                        tokens.Add(new Token(currentControlToken.value.ToString(), currentControlToken.type, currentControlToken.index));
                     }
-
-                    currentControlToken.index = nextControlToken.index;
-                    currentControlToken.value = nextControlToken.value;
-                    currentControlToken.type = nextControlToken.type;
-
-                    if (isQuot)
+                    else
                     {
-                        openedString = !openedString;
+                        literal.Append(currentChar);
                     }
-
-                    tokens.Add(new Token(currentControlToken.value.ToString(), currentControlToken.type, currentControlToken.index));
                 }
-            }
+            }            
 
+            //string hasn't closing quotation mark
             if (openedString)
             {
                 throw new Exception("Unterminated string");
@@ -318,12 +322,17 @@ namespace JSONParser
 
             return tokens.ToArray();
         }
+        private static bool IsIgnoreSymbol(char symbol)
+        {
+            return Array.IndexOf(IgnoreCharacters, symbol) != -1;
+        }
         private static bool IsControlSymbol(string input, int index)
         {
             char selectedChar = input[index];
 
             if (EscapeSymbols.ContainsKey(selectedChar))
             {
+                //code snippet gets control symbol context (is it escaping or not)
                 string escapeSymbol = EscapeSymbols[selectedChar];
                 int indexInString = escapeSymbol.IndexOf(selectedChar);
                 string stringSample = input.Substring(index - indexInString, escapeSymbol.Length);
@@ -335,6 +344,21 @@ namespace JSONParser
             }
 
             return Array.FindIndex(ControlCharacters, (char value) => { return value == selectedChar; }) != -1;
+        }
+        private static Token LiteralToToken(string literal, int literalStartIndex, bool openedString)
+        {
+            TokenType literalTokenType;
+
+            if (openedString)
+            {
+                literalTokenType = TokenType.text;
+            }
+            else
+            {
+                TryGetLiteralType(literal, out literalTokenType);
+            }
+
+            return new Token(literal, literalTokenType, literalStartIndex);
         }
         private static TokenType GetControlSymbolType(char token)
         {
@@ -506,9 +530,9 @@ namespace JSONParser
 
             return (array, end);
         }
-        private static (Object objectElement, int end) ParseObject(Token[] tokens, int startIndex)
+        private static (JSONObject objectElement, int end) ParseObject(Token[] tokens, int startIndex)
         {
-            Object objectElement = new();
+            JSONObject objectElement = new();
             int end = -1;
             string? openedFieldName = null;
 
@@ -609,7 +633,7 @@ namespace JSONParser
         }
         public static Content Parse(string json)
         {
-            return ParseTokens(Tokenize(json.Replace("\n", "").Replace(" ", "")));
+            return ParseTokens(Tokenize(json.Replace("\n", "")));
         }
 
         private static Content? AsLiteral(object obj)
@@ -626,9 +650,9 @@ namespace JSONParser
                     return null;
             }
         }
-        private static Object DOMObject(object obj)
+        private static JSONObject DOMObject(object obj)
         {
-            var objectElement = new Object();
+            var objectElement = new JSONObject();
             var type = obj.GetType();
 
             foreach (var field in type.GetFields())
