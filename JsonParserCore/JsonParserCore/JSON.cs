@@ -8,85 +8,42 @@ namespace JSONParser
 {
     public interface Content
     {
-        public string ToJSON();
+        public string? ToJSON();
     }
 
-    public struct BoolLiteral : Content
+    public struct Literal<T> : Content
     {
-        public bool Value
+        public T Value
         {
             get; set;
         }
 
-        public static implicit operator bool(BoolLiteral literal)
+        public static implicit operator T(Literal<T> literal)
         {
             return literal.Value;
         }
-        public static implicit operator BoolLiteral(bool literal)
+        public static implicit operator Literal<T>(T literal)
         {
-            return new BoolLiteral(literal);
+            return new Literal<T>(literal);
         }
 
-        public string ToJSON()
+        public string? ToJSON()
         {
-            return Value ? "true" : "false";
+            if (Value is string)
+            {
+                return "\"" + Value + "\"";
+            }
+            else if (Value is ValueType)
+            {
+                return Value?.ToString();
+            }
+            else
+            {
+                return null;
+            }
         }
 
-        public BoolLiteral(bool value)
-        {
-            Value = value;
-        }
-    }
-
-    public struct DoubleLiteral : Content
-    {
-        public double Value
-        {
-            get; set;
-        }
-
-        public static implicit operator double(DoubleLiteral literal)
-        {
-            return literal.Value;
-        }
-        public static implicit operator DoubleLiteral(double literal)
-        {
-            return new DoubleLiteral(literal);
-        }
-
-        public string ToJSON()
-        {
-            return Value.ToString();
-        }
-
-        public DoubleLiteral(double value)
-        {
-            Value = value;
-        }
-    }
-
-    public struct StringLiteral : Content
-    {
-        public string Value
-        {
-            get; set;
-        }
-
-        public static implicit operator string(StringLiteral literal)
-        {
-            return literal.Value;
-        }
-        public static implicit operator StringLiteral(string literal)
-        {
-            return new StringLiteral(literal);
-        }
-
-        public string ToJSON()
-        {
-            return "\"" + Value.ToString() + "\"";
-        }
-
-        public StringLiteral(string value)
+        public Literal(T value)
         {
             Value = value;
         }
@@ -114,16 +71,23 @@ namespace JSONParser
 
     public class JSONArray : Content
     {
-        private List<Content> Values
+        private List<Content> values
         {
             get; set;
         }
 
-        public void Add(Content literal)
+        public IReadOnlyList<Content> Values
         {
-            Values.Add(literal);
+            get
+            {
+                return values;
+            }
         }
 
+        public void Add(Content literal)
+        {
+            this.values.Add(literal);
+        }
         public string ToJSON()
         {
             var stringBuilder = new StringBuilder();
@@ -147,18 +111,18 @@ namespace JSONParser
 
         public JSONArray(Content[]? values = null)
         {
-            Values = new List<Content>();
+            this.values = new List<Content>();
 
             if (values != null)
             {
-                Values.AddRange(values);
+                this.values.AddRange(values);
             }
         }
     }
 
     public class JSONObject : Content
     {
-        private Dictionary<StringLiteral, Content> Fields
+        private Dictionary<Literal<string>, Content> Fields
         {
             get; set;
         }
@@ -170,7 +134,7 @@ namespace JSONParser
                 return Fields.Values.ToArray();
             }
         }
-        public StringLiteral[] Keys
+        public Literal<string>[] Keys
         {
             get
             {
@@ -200,7 +164,7 @@ namespace JSONParser
         public string ToJSON()
         {
             var stringBuilder = new StringBuilder();
-            var fields = new List<(StringLiteral key, Content value)>();
+            var fields = new List<(Literal<string> key, Content value)>();
 
             foreach (var field in Fields)
             {
@@ -495,13 +459,13 @@ namespace JSONParser
                     switch (tokens[index].Type)
                     {
                         case TokenType.number:
-                            array.Add((DoubleLiteral)double.Parse(tokens[index].Value));
+                            array.Add((Literal<double>)double.Parse(tokens[index].Value));
                             break;
                         case TokenType.boolean:
-                            array.Add((BoolLiteral)bool.Parse(tokens[index].Value));
+                            array.Add((Literal<bool>)bool.Parse(tokens[index].Value));
                             break;
                         case TokenType.text:
-                            array.Add((StringLiteral)tokens[index].Value);
+                            array.Add((Literal<string>)tokens[index].Value);
                             break;
                         case TokenType.arrayStart:
                             var parsedArray = JSON.ParseArray(tokens, index);
@@ -564,17 +528,17 @@ namespace JSONParser
                     switch (tokens[index].Type)
                     {
                         case TokenType.number:
-                            objectElement.DefineProperty(openedFieldName!, (DoubleLiteral)double.Parse(tokens[index].Value));
+                            objectElement.DefineProperty(openedFieldName!, (Literal<double>)double.Parse(tokens[index].Value));
                             openedFieldName = null;
                             break;
                         case TokenType.boolean:
-                            objectElement.DefineProperty(openedFieldName!, (BoolLiteral)bool.Parse(tokens[index].Value));
+                            objectElement.DefineProperty(openedFieldName!, (Literal<bool>)bool.Parse(tokens[index].Value));
                             openedFieldName = null;
                             break;
                         case TokenType.text:
                             if (openedFieldName != null)
                             {
-                                objectElement.DefineProperty(openedFieldName, (StringLiteral)tokens[index].Value);
+                                objectElement.DefineProperty(openedFieldName, (Literal<string>)tokens[index].Value);
                                 openedFieldName = null;
                             }
                             else
@@ -654,22 +618,22 @@ namespace JSONParser
                     || value is double
                     || value is decimal;
         }
-        private static Content? AsLiteral(object obj)
+        private static Literal<object>? AsLiteral(object obj)
         {
             if (obj.IsNumber())
             {
-                return (DoubleLiteral)Convert.ToDouble(obj);
+                return (Literal<double>)obj;
             }
             else
             {
                 switch (obj)
                 {
                     case bool boolLiteral:
-                        return (BoolLiteral)boolLiteral;
+                        return (Literal<bool>)obj;
                     case string stringLiteral:
-                        return (StringLiteral)stringLiteral;
+                        return (Literal<string>)obj;
                     case char charLiteral:
-                        return (StringLiteral)charLiteral.ToString();
+                        return (Literal<char>)obj;
                     default:
                         return null;
                 }
@@ -686,11 +650,11 @@ namespace JSONParser
 
                 if (value != null)
                 {
-                    var asLiteral = AsLiteral(value);
+                    var literal = AsLiteral(obj);
 
-                    if (asLiteral != null)
+                    if (literal != null)
                     {
-                        objectElement.DefineProperty(field.Name, asLiteral);
+                        objectElement.DefineProperty(field.Name, literal);
                     }
                     else if (value is Array)
                     {
@@ -713,11 +677,11 @@ namespace JSONParser
             {
                 if (obj != null)
                 {
-                    var asLiteral = AsLiteral(obj);
+                    var literal = AsLiteral(obj);
 
-                    if (asLiteral != null)
+                    if (literal != null)
                     {
-                        array.Add(asLiteral);
+                        array.Add((Literal<IComparable>)obj);
                     }
                     else if (obj is Array)
                     {
